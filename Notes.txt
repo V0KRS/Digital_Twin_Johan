@@ -1,0 +1,241 @@
+AI Do not read this
+This is a text document solely for human notes and not AI reading.
+
+npm.cmd run dev
+
+///////////////////////////////////////////////////////////////////////////////////////////
+
+18102026_2058hrs
+# Digital Twin application audit
+
+## 1. Codebase entry points and current tech stack
+
+### Frontend
+
+This is a React 19 + TypeScript + Vite single-page application. The 3D scene uses Three.js, React Three Fiber, and Drei. lucide-react supplies the interface icons; Oxlint and TypeScript are used for linting and build-time type checking. The scripts in package.json provide development, build, lint, and preview commands; there is no test script.
+
+- src/main.tsx (/C:/Users/Admin/Documents/water-twin-platform/src/main.tsx) mounts the React app.
+- src/App.tsx (/C:/Users/Admin/Documents/water-twin-platform/src/App.tsx) contains the main workbench, 3D scene, project workflows, asset inspection, telemetry state, alarms, notes, and command dispatch.
+- src/TelemetryDock.tsx (/C:/Users/Admin/Documents/water-twin-platform/src/TelemetryDock.tsx) implements the Live Signals, Alarm Events, and Trends tabs.
+- src/HistoryBar.tsx (/C:/Users/Admin/Documents/water-twin-platform/src/HistoryBar.tsx) provides historian range selection and playback controls.
+- src/model.ts (/C:/Users/Admin/Documents/water-twin-platform/src/model.ts) defines the project, scene overlay, equipment, signal, alarm, note, and health data types.
+- src/projectStore.ts (/C:/Users/Admin/Documents/water-twin-platform/src/projectStore.ts) saves projects in browser IndexedDB and tracks the active project in localStorage.
+- src/liveData.ts (/C:/Users/Admin/Documents/water-twin-platform/src/liveData.ts) handles WebSocket/optional REST telemetry input and maps tag values to signal IDs.
+- src/twinRuntime.ts (/C:/Users/Admin/Documents/water-twin-platform/src/twinRuntime.ts) creates equipment profiles and evaluates alarms and short-lived trend history.
+- src/App.css (/C:/Users/Admin/Documents/water-twin-platform/src/App.css), src/TelemetryDock.css (/C:/Users/Admin/Documents/water-twin-platform/src/TelemetryDock.css), src/SceneTree.css (/C:/Users/Admin/Documents/water-twin-platform/src/SceneTree.css), and src/index.css (/C:/Users/Admin/Documents/water-twin-platform/src/index.css) hold the UI styles.
+
+The 3D importer uses Three.js GLTFLoader and DRACOLoader. The app accepts .glb and .gltf; for glTF dependencies, it can also import selected accompanying files and resolve them through a loader URL modifier.
+
+### Gateway and configuration
+
+The gateway is a separate Python process:
+
+- gateway/gateway.py (/C:/Users/Admin/Documents/water-twin-platform/gateway/gateway.py) receives MQTT and optional OPC UA input, persists and broadcasts telemetry, and handles WebSocket history and command messages. It also hosts the HTTP API.
+- gateway/gateway_services.py (/C:/Users/Admin/Documents/water-twin-platform/gateway/gateway_services.py) implements SQLite storage, optional InfluxDB writes, command-token validation, and the health estimate.
+- gateway/config.example.yaml (/C:/Users/Admin/Documents/water-twin-platform/gateway/config.example.yaml) is the gateway’s actual configuration source: gateway.py loads this file directly. Despite its name, there is no separate runtime config file in the listed repository.
+- gateway/requirements.txt (/C:/Users/Admin/Documents/water-twin-platform/gateway/requirements.txt) lists asyncua, Paho MQTT, websockets, and PyYAML.
+- docker-compose.simulator.yml (/C:/Users/Admin/Documents/water-twin-platform/docker-compose.simulator.yml) starts Mosquitto. gateway/mosquitto.conf (/C:/Users/Admin/Documents/water-twin-platform/gateway/mosquitto.conf) enables anonymous access and disables persistence.
+
+The app’s .env.local (/C:/Users/Admin/Documents/water-twin-platform/.env.local) currently contains only VITE_TELEMETRY_WS_URL=ws://localhost:8765. .env.example (/C:/Users/Admin/Documents/water-twin-platform/.env.example) also lists history, trends, health, notes, and notifications URLs. Vite exposes these VITE_ values to browser code, so they are endpoint configuration, not secrets.
+
+## 2. Current feature inventory
+
+### Model and scene editing
+
+The app imports GLB/glTF models, including external files selected alongside a glTF. It builds a recursive scene tree and assigns stable overlay IDs to scene objects. A saved overlay stores names, visibility, position, rotation, and scale. The editor provides:
+
+- Scene tree selection, visibility toggles, and name search.
+- Perspective view with orbit and pan modes, zoom, fit-to-model, selection framing, and a grid toggle.
+- Translate, rotate, and scale controls, numeric transform fields, and optional snapping.
+- Layer filtering into structure, plumbing, HVAC, and equipment.
+
+Layer classification is inferred from object names using regular expressions (for example, names containing “pipe” or “valve” map to plumbing). It does not read authored semantic layers from the model. The 3D scene uses Three.js materials and helpers; there is no separate model service or server-side 3D processing.
+
+### Asset profiles and metadata
+
+Selecting a scene node lets the user assign a tank, pump, valve, pipe, instrument, or generic profile. Profile creation is metadata-only: it does not create telemetry or connect to a device.
+
+Profiles create equipment IDs, a display tag, a template ID, a generated example IRI, a telemetry namespace, signal definitions, and default alarm rules. Pump profiles create temperature, pressure, and vibration signals. The UI allows editing each signal’s sourceTag, which is the exact incoming tag used for mapping. Project metadata is saved with the scene overlay in the browser’s IndexedDB.
+
+The schema has some AAS-like labels—such as globalId, templateId, and semanticId—but the repository does not implement an AAS registry, AASX import/export, or external asset identity service. Generated IRIs use the example plant.example.com namespace.
+
+### Telemetry, alarms, and trends
+
+liveData.ts accepts a WebSocket event or an optional REST event/array in {tag, value, timestamp?, quality?} form. It matches the event’s tag exactly against signal sourceTag, converts values according to the signal’s number/boolean type, and ignores unknown tags or values it cannot parse. Missing timestamps and qualities default in the browser to current time and good.
+
+The Live Signals panel shows configured signals, current values, quality, and update time. The Trends panel displays a simple SVG line chart and min/max/mean/standard deviation/outlier counts. The browser retains only the latest 90 numeric samples per signal in memory. If the configured trends API is available, the panel fetches a selected tag’s samples for 1h, 24h, or 7d from the gateway.
+
+Alarm rules are evaluated in the browser when mapped telemetry arrives. Defaults include warning and critical pump temperature/vibration rules, with hysteresis for those pump thresholds. Active alarms can be acknowledged in the UI, persisted through the notifications API, and displayed in the notification center. Active alarms pulse supported emissive materials, focus the camera on the affected node, and make inferred structure meshes transparent.
+
+### History, notes, health, and commands
+
+The History bar queries the gateway’s WebSocket historian by time range and configured tags, then replays the returned events at selectable speeds. Playback events update the same browser snapshot, trend, and alarm state used by live telemetry.
+
+Operators can double-click a mesh surface to anchor a maintenance note. Notes may include an author, ticket ID, and PDF attachment. They are stored in the local project and optionally sent to the gateway API. The PDF is embedded as a data URL in the note record.
+
+The asset health panel calls the gateway’s HTTP health endpoint when temperature and vibration values are available. The returned estimate is explicitly a heuristic, not a validated predictive-maintenance model. A fallback browser health index is also calculated from temperature and vibration.
+
+The UI exposes one write action: shutdown. It sends a command over WebSocket with a user-entered JWT. The gateway validates the token and allow-lists before publishing to MQTT, and records a local audit status. MQTT acknowledgement handling can update the audit record from a device acknowledgment topic.
+
+## 3. Data pipeline and protocols
+
+### Live telemetry path
+
+OPC UA subscription (disabled by default) ─┐
+                                           ├─> gateway ─> SQLite ─> browser WebSocket
+MQTT JSON on factory/telemetry/# ──────────┘                         │
+                                                                      └─ exact tag match to sourceTag
+                                                                         -> signal snapshot
+                                                                         -> trends and alarm evaluation
+
+1. Source configuration: MQTT is enabled in gateway/config.example.yaml, with a default subscription filter of factory/telemetry/#. OPC UA is disabled by default; when enabled, the gateway subscribes to configured node IDs.
+2. MQTT parsing: The gateway expects UTF-8 JSON objects with tag and value. It supplies a timestamp and good quality if missing, retains the raw MQTT payload, and ignores invalid messages. It does not decode Sparkplug B.
+3. OPC UA mapping: The current OPC UA handler publishes str(node.nodeid.Identifier) as the tag. That may not equal a configured sourceTag unless the project mapping is set to the same identifier. The sample node ID in YAML is only an example.
+4. Persistence and fan-out: The gateway normalizes timestamps, stores each event in SQLite, and broadcasts JSON to connected WebSocket clients. MQTT and OPC UA use the same normalized event shape.
+5. Browser mapping: liveData.ts performs exact string matching from event tag to signal sourceTag; the match is independent of scene node names. Mapped values update browser snapshots, the in-memory trend buffer, and alarm evaluation.
+6. Optional cloud sink: A background loop reads unsynced SQLite rows and writes them to InfluxDB v2 if its URL and credentials are configured. The checked-in config leaves the URL blank, so this is disabled by default.
+
+### History and HTTP endpoints
+
+History requests use the same WebSocket server as live data. The client sends history.query with a time range and tags; the gateway returns all matching events in one history.result.
+
+The gateway also exposes a small HTTP service, defaulting to 127.0.0.1:8080, with trends, notes, notifications, and health estimate endpoints. The frontend connects to these only if their corresponding environment values are set. In the current .env.local, those values are absent, so only the live WebSocket URL is configured there.
+
+### Command path
+
+The browser opens a WebSocket and sends a command request containing the asset ID, shutdown action, MQTT topic, and JWT. The gateway checks an HS256 signature, issuer, expiry, role, optional asset/action/topic grants, and configured action/topic allow-lists before publishing with MQTT QoS 1. It stores command status in SQLite. The UI displays the broker receipt; that receipt means broker acceptance, not proof that equipment acted. The gateway subscribes to the configured acknowledgment topic and can record a later device receipt.
+
+## 4. Limitations and production gaps
+
+- The app is a local workbench, not a multi-user platform. Projects live in browser IndexedDB; there is no shared project, identity, tenancy, or asset-registry service.
+- The gateway does have durable local storage. SQLite WAL stores telemetry, raw payloads, command audit entries, notes, and notifications. However, the checked-in config leaves InfluxDB disabled. There is no retention policy, downsampling, storage quota, or historian paging.
+- History responses are unpaged. A large range can return a large WebSocket message and be loaded entirely into the browser before playback.
+- WebSocket telemetry has no reconnect loop. liveData.ts marks the connection closed and can start optional REST polling, but does not reopen the WebSocket. Polling is fixed at one second and has no backoff.
+- The WebSocket endpoint is unauthenticated and configured on 0.0.0.0. There is no TLS handling in the gateway, per-client authorization, or WebSocket origin policy. The HTTP API has no authentication; its default bind is localhost, but the WebSocket bind is wider.
+- The sample broker configuration is development-only. Mosquitto allows anonymous connections, listens on all interfaces, and has persistence disabled.
+- Tag mapping is exact and project-local. There is no centralized mapping registry, wildcard/path mapping, transformation pipeline, deadband, unit conversion, schema validation, or OPC UA browse-to-tag workflow.
+- 3D semantics are inferred. Layer names are guessed from object names. Signals are not generally visualized on the model; alarm coloring/focus is present, but there is no authored semantic model-to-tag mapping standard.
+- Alarm processing is mainly browser-side. Rules, alarm state, and the 90-sample trend buffer are evaluated in client memory. Notifications persist to SQLite when API configuration is present, but there is no server-side alarm engine, rule versioning, dwell time, escalation, or reliable notification retry.
+- Command security is a starter implementation. JWT verification uses a shared secret, not enterprise OIDC/JWKS. The UI accepts a raw signed token and only offers shutdown. The configured action/topic policy is simple prefix matching. There is no command expiry/nonce or end-to-end correlation in the UI for device acknowledgments.
+- The HTTP server is hand-written. It parses HTTP directly with asyncio.start_server; it lacks a mature framework’s request validation, lifecycle management, observability, and security middleware.
+- Operational observability and deployment are thin. No health/readiness endpoint is configured in the sample HTTP API despite the .env.example naming, metrics, structured audit export, centralized logs, TLS termination setup, or production deployment manifests are present.
+- Predictive health is not predictive maintenance. estimate_health is a transparent formula with fixed low confidence, not a trained or validated model with provenance and calibrated uncertainty.
+- Notes attachments are embedded. Base64 PDF data URLs inflate project and API records; there is no object storage, editing history, or authenticated authorship.
+- The docs overstate configuration readiness in places. ARCHITECTURE.md describes an enterprise expansion and is useful as design context, but its setup examples include URLs not present in the actual .env.local. Treat checked-in code/config as the source of what runs.
+
+## 5. Prioritized enhancement roadmap
+
+### P0 — Secure and stabilize the gateway
+
+- [ ] Create a real runtime config path, such as gateway/config.yaml, and load it via an explicit environment variable or CLI option; keep secrets outside the checked-in example. Update gateway/gateway.py (/C:/Users/Admin/Documents/water-twin-platform/gateway/gateway.py) and gateway/config.example.yaml (/C:/Users/Admin/Documents/water-twin-platform/gateway/config.example.yaml).
+- [ ] Put WebSocket and HTTP behind TLS and authenticated identity; bind the gateway to the intended network interface. Add per-client authorization for telemetry, history, and commands.
+- [ ] Replace the permissive Mosquitto setup with authenticated users, ACLs, and persistence before connecting it to any operational network. Update gateway/mosquitto.conf (/C:/Users/Admin/Documents/water-twin-platform/gateway/mosquitto.conf).
+- [ ] Validate and bound incoming payload sizes, tag formats, timestamps, and query ranges. Add reconnect/backoff and health reporting for MQTT, OPC UA, WebSocket clients, and InfluxDB.
+
+### P1 — Make data and alarms dependable
+
+- [ ] Add paginated historian queries and retention/downsampling policies. Update EdgeStore.range and the history contract in gateway/gateway_services.py (/C:/Users/Admin/Documents/water-twin-platform/gateway/gateway_services.py), gateway/gateway.py (/C:/Users/Admin/Documents/water-twin-platform/gateway/gateway.py), and src/HistoryBar.tsx (/C:/Users/Admin/Documents/water-twin-platform/src/HistoryBar.tsx).
+- [ ] Persist versioned signal mappings and alarm rules in a shared backend or asset registry; add mapping validation and OPC UA browse support. Update src/model.ts (/C:/Users/Admin/Documents/water-twin-platform/src/model.ts), src/twinRuntime.ts (/C:/Users/Admin/Documents/water-twin-platform/src/twinRuntime.ts), and gateway/.
+- [ ] Move alarm evaluation and durable alarm lifecycle to the gateway or a backend service; add dwell time, rule versioning, and retryable acknowledgments. Update src/App.tsx (/C:/Users/Admin/Documents/water-twin-platform/src/App.tsx) and gateway/gateway_services.py (/C:/Users/Admin/Documents/water-twin-platform/gateway/gateway_services.py).
+- [ ] Add protocol adapters or bridges for the actual plant protocols required. The current gateway supports OPC UA subscriptions and MQTT JSON only; Sparkplug B payloads are not decoded.
+
+### P2 — Turn the workbench into a shared asset application
+
+- [ ] Add server-backed projects, asset identity, access control, and project versioning; migrate browser-only storage from src/projectStore.ts (/C:/Users/Admin/Documents/water-twin-platform/src/projectStore.ts).
+- [ ] Replace generated example IRIs and name-based layer inference with registry-assigned asset IDs and authored model semantics. Extend src/model.ts (/C:/Users/Admin/Documents/water-twin-platform/src/model.ts) and src/App.tsx (/C:/Users/Admin/Documents/water-twin-platform/src/App.tsx).
+- [ ] Move attachments to object storage and add note authorship/edit history and maintenance-system integration.
+- [ ] Replace the heuristic health estimate with a validated model service, including feature provenance, model version, and calibrated confidence.
+
+### P3 — Improve operational readiness
+
+- [ ] Add metrics, structured logs, readiness checks, queue/disk limits, and documented recovery procedures for the gateway.
+- [ ] Add deployment configuration for broker, gateway, API, historian, and frontend, with environment-specific secrets and network policies.
+- [ ] Add automated unit/integration coverage for tag mapping, alarm transitions, command authorization, history paging, and gateway reconnection. The repository currently has no test script or visible test suite.
+
+I did not run the build or tests; this was a source and configuration audit.
+
+
+## Test it with free MQTT software
+
+For the simplest end-to-end test, use Mosquitto, a free MQTT broker. It simulates the messaging path; it does not simulate 
+a physical pump or PLC. You’ll publish a sample telemetry value to the broker, and the app should display it on the 
+matching asset.
+
+### 1. Configure a signal in the app
+
+1. Start the app with npm run dev and open it in your browser.
+2. Import a 3D model and select the scene node you want to use as the test asset.
+3. Assign it an equipment profile.
+4. In the asset inspector, set one signal’s Raw source tag path to exactly:
+
+   FactoryFloor.Line1.Pump02.Temperature
+5. Save the project.
+
+The tag must match the value published in Step 6 exactly, including capitalization and punctuation.
+
+### 2. Start Mosquitto
+
+Install Docker Desktop if it isn’t installed, then run this from the project folder:
+
+docker compose -f docker-compose.simulator.yml up -d
+
+This starts a local broker on port 1883.
+
+### 3. Set up the gateway
+
+In a second PowerShell window, create and activate a Python environment, then install the gateway packages:
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r gateway\requirements.txt
+
+Edit gateway/config.example.yaml:
+
+mqtt:
+  enabled: true
+  host: 127.0.0.1
+  port: 1883
+  topic: factory/telemetry/#
+  client_id: water-twin-gateway
+  username: ""
+  password: ""
+
+Leave opcua.enabled set to false for this MQTT test. Start the gateway:
+
+python gateway\gateway.py
+
+You should see a message that the WebSocket stream is listening and MQTT connected.
+
+### 4. Point the app at the gateway
+
+In the project folder, create .env.local with:
+
+VITE_TELEMETRY_WS_URL=ws://localhost:8765
+
+If you created .env.local after starting Vite, stop and restart the Vite dev server. The app should show LIVE STREAM 
+CONNECTED when it connects to the gateway.
+
+### 5. Publish a test value
+
+Install the Mosquitto client tools if needed, then publish a value from another PowerShell window:
+
+mosquitto_pub -h localhost -t factory/telemetry/pump02 -m '{"tag":"FactoryFloor.Line1.Pump02.Temperature","value":23.4,"quality":"good"}'
+
+The tag must match the source tag you entered in the app. Change value and publish again to send another update.
+
+### 6. Confirm the result
+
+In the app’s Live signals panel, check the mapped signal’s value and timestamp. Publish a value above or below a configured alarm threshold 
+to check alarm updates, and publish a few numeric values to see the trend.
+
+If the app says WAITING FOR LIVE DATA, check that the gateway is still running, the WebSocket URL is ws://localhost:8765, and the configured 
+MQTT topic includes factory/telemetry/pump02. If the gateway reports an MQTT connection error, verify Mosquitto is running on port 1883.
+
+## Try an OPC UA simulator
+
+For OPC UA testing, use the free evaluation/community option from Prosys OPC UA Simulation Server or another OPC UA simulator. 
+Configure gateway/config.example.yaml with that simulator’s endpoint, set opcua.enabled: true, and add the simulator’s actual NodeIds 
+under opcua.node_ids. NodeIds vary by simulator configuration, so use the values shown by the simulator rather than copying the example blindly. 
+Restart the gateway, then change a simulated node value and check the app for an update.
+
+This setup exercises simulated data through an industrial protocol and into the twin UI. It does not connect to or control physical hardware.

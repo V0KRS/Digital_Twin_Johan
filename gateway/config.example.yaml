@@ -1,0 +1,57 @@
+websocket:
+  host: 0.0.0.0
+  port: 8765
+opcua:
+  enabled: false
+  endpoint: opc.tcp://host.docker.internal:53530/OPCUA/SimulationServer
+  username: ""
+  password: ""
+  node_ids:
+    - ns=3;s=FactoryFloor.Line1.Pump02.Temperature
+# mqtt:
+#   enabled: false
+#   host: 127.0.0.1
+#   port: 1883
+#   topic: factory/telemetry/#
+#   client_id: water-twin-gateway
+#   username: ""
+#   password: ""
+mqtt:
+  enabled: true
+  host: 127.0.0.1
+  port: 1883
+  topic: factory/telemetry/#
+  command_ack_topic: factory/control/+/ack
+  client_id: water-twin-gateway
+  username: ""
+  password: ""
+
+# Local SQLite is the durable edge historian and store-and-forward queue.
+storage:
+  sqlite_path: gateway/data/edge.db
+
+# Optional InfluxDB v2 sink. Leave url blank for local-only history.
+influx:
+  url: ""
+  org: water-twin
+  bucket: telemetry
+  token: ""
+
+# Development guardrails only. Production authorization must derive userId and
+# permissions from a verified identity provider; never trust browser claims.
+commands:
+  allowed_topics:
+    - factory/control/
+  allowed_actions: [shutdown, start, setpoint]
+
+auth:
+  jwt_secret: "" # Set GATEWAY_JWT_SECRET in the gateway process environment.
+  issuer: water-twin
+
+http:
+  enabled: true
+  host: 127.0.0.1
+  port: 8080
+  cors_origin: http://localhost:5173
+
+# MQTT JSON event format: {"tag":"...","value":23.4,"timestamp":"...","quality":"good"}
